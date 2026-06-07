@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Wispr-API-based}",
+            "name": "Debug Vani",
+            "target": "Vani",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Vani"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Wispr-API-based}",
+            "name": "Release Vani",
+            "target": "Vani",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Vani"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Wispr-API-based}",
+            "name": "Debug Vani",
+            "target": "Vani",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Vani"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Wispr-API-based}",
+            "name": "Release Vani",
+            "target": "Vani",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Vani"
+        }
+    ]
+}
