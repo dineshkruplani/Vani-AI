@@ -24,6 +24,30 @@ enum HotkeyTrigger: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Full human name of the key (no glyph), for HUD copy — e.g. "Right Option".
+    var name: String {
+        switch self {
+        case .fn: return "Fn"
+        case .rightOption: return "Right Option"
+        case .rightCommand: return "Right Command"
+        case .rightControl: return "Right Control"
+        case .custom: return "your shortcut"
+        case .off: return "your key"
+        }
+    }
+
+    /// Compact symbol for the key, for the HUD keycap.
+    var glyph: String {
+        switch self {
+        case .fn: return "fn"
+        case .rightOption: return "⌥"
+        case .rightCommand: return "⌘"
+        case .rightControl: return "⌃"
+        case .custom: return "⌥"
+        case .off: return "·"
+        }
+    }
+
     /// Keycode for right-side modifier keys (nil for Fn / off).
     fileprivate var keycode: Int64? {
         switch self {

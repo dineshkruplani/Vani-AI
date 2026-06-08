@@ -34,6 +34,7 @@ final class AppState: ObservableObject {
 
     private var capturedSelection: String = ""
     private var capturedContext: String = ""
+    private var screenContextTask: Task<String, Never>?
     private var currentMode: Mode = .dictation
 
     private var gestureDictation: GestureController!
@@ -59,6 +60,7 @@ final class AppState: ObservableObject {
             HotkeyManager.promptForAccessibility()
         }
         reloadHotkeys()
+        FocusWatcher.shared.start()
     }
 
     /// (Re)bind the configured hotkeys and ensure the tap is running.
@@ -114,6 +116,16 @@ final class AppState: ObservableObject {
         capturedSelection = SelectionAccess.readForRouting()
         capturedContext = SelectionAccess.contextBeforeCursor()
 
+        // Capture the active-window context now so it overlaps with speaking + STT and
+        // is ready by the time the cleanup LLM runs. Skipped if disabled.
+        let store = SettingsStore.shared
+        if store.screenContextEnabled {
+            let useOCR = store.screenOCREnabled
+            screenContextTask = Task.detached { await ScreenContextService.capture(useOCR: useOCR) }
+        } else {
+            screenContextTask = nil
+        }
+
         guard recorder.start() else { fail("Couldn't start the microphone"); return false }
         status = .recording
         return true
@@ -124,10 +136,10 @@ final class AppState: ObservableObject {
         SoundCue.start()
         switch currentMode {
         case .dictation:
-            HUDController.shared.show(icon: "mic.fill", text: "Listening…", tint: .red)
+            HUDController.shared.show(phase: .listening(command: false), title: "Listening")
         case .command:
-            let hint = capturedSelection.isEmpty ? "Ask anything…" : "Command on selection…"
-            HUDController.shared.show(icon: "wand.and.stars", text: hint, tint: .orange)
+            let title = capturedSelection.isEmpty ? "Ask anything" : "Command on selection"
+            HUDController.shared.show(phase: .listening(command: true), title: title)
         }
     }
 
@@ -166,54 +178,95 @@ final class AppState: ObservableObject {
         defer { try? FileManager.default.removeItem(at: url) }
         let selection = capturedSelection
         let context = capturedContext
+
+        // Local diagnostics (see menu → Diagnostics). Filled in as we go; recorded on exit.
+        let started = Date()
+        let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+        var diagTranscript = "", diagContext = "", diagOutput = ""
+        var diagLeak = false
+        defer {
+            Diagnostics.shared.record(app: frontApp, mode: "\(mode)", transcript: diagTranscript,
+                                      context: diagContext, output: diagOutput, leakStripped: diagLeak,
+                                      ms: Int(Date().timeIntervalSince(started) * 1000))
+        }
+
         do {
             let stt = try SettingsStore.shared.makeSTTProvider(context: context)
 
             status = .transcribing
-            HUDController.shared.show(icon: "waveform", text: "Transcribing…")
+            HUDController.shared.show(phase: .transcribing, title: "Transcribing")
             let transcript = try await stt.transcribe(audioFileURL: url)
+            diagTranscript = transcript
 
             status = .thinking
+            // Active-window context captured at recording start (ready by now).
+            let screenContext = await screenContextTask?.value ?? ""
+            diagContext = screenContext
 
             switch mode {
             case .dictation:
-                HUDController.shared.show(icon: "sparkles", text: "Cleaning up…")
+                HUDController.shared.show(phase: .cleaning, title: "Cleaning up",
+                                          detail: SettingsStore.shared.cleanupModelDisplay)
                 // Clean up with the LLM; if it's unavailable (offline / no key / error),
                 // fall back to the raw transcript so dictation still works offline.
                 var cleaned = transcript
                 var fellBack = false
                 do {
-                    let llm = try SettingsStore.shared.makeLLMProvider()
-                    let out = try await llm.process(transcript: transcript, selection: "")
+                    let llm = try SettingsStore.shared.makeLLMProvider(screenContext: screenContext)
+                    var out = try await llm.process(transcript: transcript, selection: "")
+                    if !screenContext.isEmpty {
+                        let safe = stripContextLeak(out, transcript: transcript, context: screenContext)
+                        if safe != out { diagLeak = true }
+                        // If the model echoed the screen context, redo without it.
+                        if safe.isEmpty {
+                            let plain = try SettingsStore.shared.makeLLMProvider()
+                            out = try await plain.process(transcript: transcript, selection: "")
+                        } else {
+                            out = safe
+                        }
+                    }
                     if !out.isEmpty { cleaned = out }
                 } catch {
                     fellBack = true
                 }
                 let final = applySnippets(cleaned)
+                diagOutput = final
                 TextInserter.insert(final)
                 if fellBack {
                     lastInserted = final
+                    SettingsStore.shared.addHistory(final)
                     status = .idle
                     SoundCue.done()
-                    HUDController.shared.show(icon: "checkmark.circle", text: "Inserted (raw — offline)", tint: .green, autoHide: 1.2)
+                    HUDController.shared.show(phase: .inserted, title: "Inserted", detail: "raw · offline", autoHide: 1.4)
                 } else {
                     succeed(with: final)
                 }
 
             case .command where !selection.isEmpty:
                 // Command needs the LLM (no offline fallback for edits).
-                let llm = try SettingsStore.shared.makeLLMProvider()
-                HUDController.shared.show(icon: "wand.and.stars", text: "Editing…")
-                let text = try await llm.rewrite(instruction: transcript, selection: selection)
+                let llm = try SettingsStore.shared.makeLLMProvider(screenContext: screenContext)
+                HUDController.shared.show(phase: .cleaning, title: "Editing selection",
+                                          detail: SettingsStore.shared.cleanupModelDisplay)
+                var text = try await llm.rewrite(instruction: transcript, selection: selection)
+                if !screenContext.isEmpty {
+                    // Keep lines that came from the selection; only strip screen-context echoes.
+                    let safe = stripContextLeak(text, transcript: transcript + "\n" + selection, context: screenContext)
+                    if safe != text { diagLeak = true }
+                    if !safe.isEmpty { text = safe }
+                }
                 let final = applySnippets(text.isEmpty ? selection : text)
+                diagOutput = final
                 TextInserter.insert(final)
                 succeed(with: final)
 
             case .command:
                 // No selection → answer the question (needs the LLM), show in popover.
                 let llm = try SettingsStore.shared.makeLLMProvider()
-                HUDController.shared.show(icon: "wand.and.stars", text: "Thinking…")
-                let reply = try await llm.answer(question: transcript, context: context)
+                HUDController.shared.show(phase: .cleaning, title: "Thinking")
+                // Answer mode passes context inline; combine caret text + screen content.
+                let answerContext = [context, screenContext].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                let reply = try await llm.answer(question: transcript, context: answerContext)
+                diagOutput = reply
                 HUDController.shared.hide()
                 status = .idle
                 SoundCue.done()
@@ -318,15 +371,18 @@ final class AppState: ObservableObject {
 
     private func succeed(with text: String) {
         lastInserted = text
+        SettingsStore.shared.addHistory(text)
         status = .idle
         SoundCue.done()
-        HUDController.shared.show(icon: "checkmark.circle.fill", text: "Inserted", tint: .green, autoHide: 0.9)
+        let words = text.split { $0 == " " || $0.isNewline }.count
+        HUDController.shared.show(phase: .inserted, title: "Inserted",
+                                  detail: "\(words) word\(words == 1 ? "" : "s")", autoHide: 1.0)
     }
 
     private func fail(_ message: String) {
         status = .error(message)
         SoundCue.error()
-        HUDController.shared.show(icon: "exclamationmark.triangle.fill", text: message, tint: .red, autoHide: 3.5)
+        HUDController.shared.show(phase: .error, title: "Something went wrong", detail: message, autoHide: 3.5)
     }
 
     /// Power Mode: if the frontmost app has a profile, override mode + language for this dictation.
@@ -348,6 +404,28 @@ final class AppState: ObservableObject {
         TextTransforms.applyReplacements(text, SettingsStore.shared.snippetPairs())
     }
 
+    /// Safety net: occasionally the cleanup model copies a line out of the screen
+    /// context instead of just using it. Drop any output line that came verbatim from
+    /// the context but not from what the user actually said. Returns the cleaned text,
+    /// or "" if everything was a leak (caller then falls back to a context-free pass).
+    private func stripContextLeak(_ output: String, transcript: String, context: String) -> String {
+        let ctx = context.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ctx.isEmpty else { return output }
+        func norm(_ s: String) -> String {
+            s.lowercased().components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        let ctxN = norm(ctx)
+        let trN = norm(transcript)
+        let kept = output.split(separator: "\n", omittingEmptySubsequences: false).filter { line in
+            let l = line.trimmingCharacters(in: .whitespaces)
+            guard l.count >= 20 else { return true }            // short lines are safe
+            let ln = norm(String(l))
+            return !(ctxN.contains(ln) && !trN.contains(ln))    // drop screen-sourced lines
+        }
+        return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func isError(_ s: Status) -> Bool {
         if case .error = s { return true }
         return false
@@ -361,6 +439,19 @@ final class AppState: ObservableObject {
         case .recording: return "mic.fill"
         case .transcribing, .thinking: return "waveform"
         case .error: return "exclamationmark.triangle"
+        }
+    }
+
+    /// The Vani logo mark for the menu bar. Template (system-tinted) when idle so it
+    /// adapts to light/dark menu bars; tinted Iris while active; orange on error.
+    var menuBarImage: NSImage {
+        switch status {
+        case .idle:
+            return VaniGlyph.image(color: .labelColor, template: true)
+        case .recording, .transcribing, .thinking:
+            return VaniGlyph.image(color: NSColor(hex: SettingsStore.shared.accentHex), template: false)
+        case .error:
+            return VaniGlyph.image(color: NSColor(hex: 0xE0734A), template: false)
         }
     }
 

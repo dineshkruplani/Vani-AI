@@ -5,6 +5,28 @@ Running list of things intentionally deferred. Newest context at top of each sec
 
 ---
 
+## Liquid-Glass design system (epic — in progress)
+Implementing the Vani visual handoff in SwiftUI, phased.
+- [x] **Phase 1 — Foundation**: design tokens (Iris accent, adaptive light/dark colors, radii), glass
+      material modifier (`glassPanel`), animated aurora background, Light/Dark/Auto theme, **bundled fonts**
+      (Hanken Grotesk / Newsreader / Spline Sans Mono), **Launch-at-login**, **Show-in-Dock**, **History (store/clear)**.
+- [x] **Phase 2 — Controls**: glass component kit (GroupLabel, GlassCard, SettingRow, VaniTabBar, ChipField, AccentSwatches).
+- [x] **Phase 3 — Dynamic-island HUD**: voice-dot pulse, live waveform, mono timer, dark-glass gradient.
+- [x] **Phase 4 — Onboarding**: 7-step glass flow (welcome / permissions / push-to-talk / connect /
+      voice&style / try-it / all-set) with typewriter snippet + logo mark.
+- [x] **Phase 5 — Settings**: 6-tab glass window (General / Voice / Providers[Simple·Advanced] / Shortcuts / Privacy / About).
+- [x] **Phase 6 — Brand assets**: Vani `.icns` app icon (Iris squircle + "va" glyph) generated via CoreGraphics, bundled.
+- [x] **Visual fidelity pass (HUD)**: top-center Dynamic-Island placement; removed the Iris glow; fixed the
+      resize-ghost (OS window shadow → SwiftUI shadow); inline detail (`Cleaning up · gpt-4o-mini`,
+      `Inserted · 24 words`); waveform-left listening layout with 20-bar silhouette; **idle "Hold ⌥ to talk"
+      prompt** shown when a text field is focused in any app (FocusWatcher via Accessibility; toggle in General).
+- [ ] **Visual fidelity pass (Settings/Onboarding)**: boards match closely; tune further if on-device render drifts.
+- [ ] **History viewer** (list of past dictations) — counter + clear done; full list view pending.
+- [ ] Edit-in-place HUD two-row state (header + spoken command) from the design.
+- [ ] When on **macOS 26 (Tahoe)**: swap the material approximation for the real `.glassEffect()` APIs.
+- Notes: keys stay in **UserDefaults** (not Keychain — update design copy); **both hold + double-tap** stay
+  always-on (no Hold/Toggle setting); cleanup-toggle granularity (filler/punctuation/caps) intentionally dropped.
+
 ## Tech debt / cleanup
 - [ ] **Rename internal `Flow*` symbols → `Vani*`.** App name "FlowKey" is fully gone, but the internal
       core library/types still carry the old brand: `FlowCore` (module, ~12 refs), `FlowError` (~45),
@@ -28,9 +50,11 @@ Running list of things intentionally deferred. Newest context at top of each sec
       add optional STT/LLM provider+model per app.
 - [ ] **Streaming insertion** — insert text as it's transcribed for lower perceived latency.
 - [ ] **Multi-turn AI assistant** — extend the answer-mode popover into a short back-and-forth.
-- [ ] **Screen-OCR context fallback (opt-in)** — on-device Vision OCR for apps where Accessibility can't
-      read selection/context (some Electron/web). Gated behind a toggle + Screen Recording permission.
-      (AX stays primary — more private/reliable.)
+- [x] **Context awareness (screen content)** — `ScreenContextService` reads the active window (app name +
+      title + visible text via the AX tree) at recording start and injects it into the cleanup/command LLM
+      system prompt (`<SCREEN_CONTEXT>` block) so it spells on-screen names right and matches context.
+      Opt-in **Screen-OCR fallback** (ScreenCaptureKit + Vision) for apps AX can't read (needs Screen
+      Recording). Toggles in Voice → Context awareness; default on (AX), OCR off. (VoiceInk parity.)
 - [ ] **In-app local-model manager** — download/select whisper.cpp models from within the app (today the
       user curls a model + pastes a path). VoiceInk-style.
 - [ ] **Deeper "Correct Last" learning** — diff old→corrected to auto-build wrong→right replacements,

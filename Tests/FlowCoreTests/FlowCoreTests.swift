@@ -124,6 +124,28 @@ private let dummyAudio = URL(fileURLWithPath: #filePath)
     #expect(messages.first?["content"]?.contains("Write like a pirate.") == true)
 }
 
+@Test func screenContextIsInjectedIntoSystemPrompt() async throws {
+    let transport = MockTransport([.init(status: 200, body: json(#"{"choices":[{"message":{"content":"x"}}]}"#))])
+    let provider = OpenAILLMProvider(config: .openAILLM(apiKey: "k"),
+                                     screenContext: "Application: Mail\nWindow: Re: Q3 plan\n\nVisible text:\nHi Priya, …",
+                                     transport: transport)
+    _ = try await provider.cleanup("hey priya thanks for the q3 plan")
+    let payload = try JSONSerialization.jsonObject(with: transport.requests.first!.httpBody!) as! [String: Any]
+    let messages = payload["messages"] as! [[String: String]]
+    let system = messages.first?["content"] ?? ""
+    #expect(system.contains("<SCREEN_CONTEXT>"))
+    #expect(system.contains("Re: Q3 plan"))
+}
+
+@Test func noScreenContextLeavesPromptClean() async throws {
+    let transport = MockTransport([.init(status: 200, body: json(#"{"choices":[{"message":{"content":"x"}}]}"#))])
+    let provider = OpenAILLMProvider(config: .openAILLM(apiKey: "k"), transport: transport)
+    _ = try await provider.cleanup("hello")
+    let payload = try JSONSerialization.jsonObject(with: transport.requests.first!.httpBody!) as! [String: Any]
+    let messages = payload["messages"] as! [[String: String]]
+    #expect((messages.first?["content"] ?? "").contains("SCREEN_CONTEXT") == false)
+}
+
 @Test func textReplacementsAreCaseInsensitiveAndOrdered() {
     let out = TextTransforms.applyReplacements(
         "email me at my email and visit my site",
@@ -149,7 +171,7 @@ private let dummyAudio = URL(fileURLWithPath: #filePath)
     let messages = payload["messages"] as! [[String: String]]
     #expect(messages.first?["role"] == "system")
     #expect(messages.first?["content"]?.contains(FlowPrompt.systemCleanup) == true)
-    #expect(messages.last?["content"] == "um so like this is a test message")
+    #expect(messages.last?["content"] == "<TRANSCRIPT>um so like this is a test message</TRANSCRIPT>")
     #expect(payload["model"] as? String == "gpt-4o-mini")
 }
 

@@ -3,6 +3,7 @@ import SwiftUI
 /// The dropdown shown from the menu-bar icon.
 struct MenuContent: View {
     @ObservedObject private var state = AppState.shared
+    @ObservedObject private var diag = Diagnostics.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -46,6 +47,18 @@ struct MenuContent: View {
 
         Button("Setup Guide…") {
             OnboardingWindowController.shared.show()
+        }
+
+        Menu("Diagnostics") {
+            Button("Copy Last Capture Info") { diag.copyLatest() }
+                .disabled(diag.entries.isEmpty)
+            Button("Reveal Diagnostics Log…") { diag.revealLog() }
+                .disabled(diag.entries.isEmpty)
+            if let last = diag.entries.first {
+                Divider()
+                Text("Last: \(last.contextChars) ctx chars\(last.leakStripped ? " · leak stripped" : "")")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
 
         Button("Quit Vani") {

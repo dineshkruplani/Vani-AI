@@ -9,6 +9,13 @@ struct PromptMode: Codable, Identifiable, Hashable {
     var id: String { "custom:\(name)" }
 }
 
+/// A recorded dictation result (for the History view).
+struct HistoryEntry: Codable, Identifiable, Hashable {
+    var text: String
+    var date: Date
+    var id: Date { date }
+}
+
 /// Power Mode: per-app overrides applied automatically based on the frontmost app.
 struct PowerProfile: Codable, Identifiable, Hashable {
     var bundleID: String
@@ -99,11 +106,104 @@ final class SettingsStore {
         static let snippets = "snippetsText"
         static let powerEnabled = "powerModeEnabled"
         static let powerProfiles = "powerProfiles"
+        static let appTheme = "appTheme"
+        static let showInDock = "showInDock"
+        static let historyEnabled = "historyEnabled"
+        static let history = "history"
+        static let removeFiller = "cleanupRemoveFiller"
+        static let autoPunctuation = "cleanupAutoPunctuation"
+        static let smartCaps = "cleanupSmartCaps"
+        static let playSound = "playSound"
+        static let showMenuBar = "showMenuBarIcon"
+        static let accentHex = "accentHex"
+        static let floatingIndicator = "showFloatingIndicator"
+        static let holdPrompt = "showHoldPrompt"
+        static let diagnostics = "anonymousDiagnostics"
+        static let screenContext = "screenContextEnabled"
+        static let screenOCR = "screenOCREnabled"
     }
 
     // Transient per-dictation overrides (set by Power Mode at capture time; not persisted).
     var overrideModeID: String?
     var overrideLanguage: String?
+
+    // MARK: - Appearance / startup / history
+
+    var appTheme: AppTheme {
+        get { AppTheme(rawValue: defaults.string(forKey: Key.appTheme) ?? "") ?? .auto }
+        set { defaults.set(newValue.rawValue, forKey: Key.appTheme) }
+    }
+
+    var showInDock: Bool {
+        get { defaults.bool(forKey: Key.showInDock) }
+        set { defaults.set(newValue, forKey: Key.showInDock) }
+    }
+
+    /// History defaults ON unless explicitly disabled.
+    var historyEnabled: Bool {
+        get { defaults.object(forKey: Key.historyEnabled) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.historyEnabled) }
+    }
+
+    // Cleanup toggles (default ON — the base prompt already does all three).
+    private func boolDefaultTrue(_ key: String) -> Bool { defaults.object(forKey: key) as? Bool ?? true }
+    var removeFiller: Bool { get { boolDefaultTrue(Key.removeFiller) } set { defaults.set(newValue, forKey: Key.removeFiller) } }
+    var autoPunctuation: Bool { get { boolDefaultTrue(Key.autoPunctuation) } set { defaults.set(newValue, forKey: Key.autoPunctuation) } }
+    var smartCaps: Bool { get { boolDefaultTrue(Key.smartCaps) } set { defaults.set(newValue, forKey: Key.smartCaps) } }
+    var playSound: Bool { get { boolDefaultTrue(Key.playSound) } set { defaults.set(newValue, forKey: Key.playSound) } }
+    var showMenuBarIcon: Bool { get { boolDefaultTrue(Key.showMenuBar) } set { defaults.set(newValue, forKey: Key.showMenuBar) } }
+    var showFloatingIndicator: Bool { get { boolDefaultTrue(Key.floatingIndicator) } set { defaults.set(newValue, forKey: Key.floatingIndicator) } }
+    /// Show the "Hold ⌥ to talk" prompt when a text field is focused in any app.
+    var showHoldPrompt: Bool { get { boolDefaultTrue(Key.holdPrompt) } set { defaults.set(newValue, forKey: Key.holdPrompt) } }
+    /// Read the active window (app, title, visible text) and give it to the AI as context.
+    var screenContextEnabled: Bool { get { boolDefaultTrue(Key.screenContext) } set { defaults.set(newValue, forKey: Key.screenContext) } }
+    /// Opt-in: screenshot + OCR the active window for apps Accessibility can't read (needs Screen Recording).
+    var screenOCREnabled: Bool { get { defaults.bool(forKey: Key.screenOCR) } set { defaults.set(newValue, forKey: Key.screenOCR) } }
+    var diagnostics: Bool { get { defaults.bool(forKey: Key.diagnostics) } set { defaults.set(newValue, forKey: Key.diagnostics) } }
+
+    var accentHex: UInt32 {
+        get { UInt32(defaults.object(forKey: Key.accentHex) as? Int ?? 0x6F6BE0) }
+        set { defaults.set(Int(newValue), forKey: Key.accentHex) }
+    }
+
+    /// Vocabulary as a list (chip UI) backed by the comma-separated string.
+    var vocabularyList: [String] {
+        get {
+            customVocabulary.split(whereSeparator: { ",;\n".contains($0) })
+                .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        }
+        set { customVocabulary = newValue.joined(separator: ", ") }
+    }
+
+    /// Extra cleanup instructions when a default behavior is turned OFF.
+    private var cleanupInstruction: String {
+        var notes: [String] = []
+        if !removeFiller { notes.append("Keep filler words (um, uh, like) as spoken.") }
+        if !autoPunctuation { notes.append("Do not add or change punctuation.") }
+        if !smartCaps { notes.append("Do not change capitalization.") }
+        return notes.joined(separator: " ")
+    }
+
+    var history: [HistoryEntry] {
+        get {
+            guard let data = defaults.data(forKey: Key.history),
+                  let items = try? JSONDecoder().decode([HistoryEntry].self, from: data) else { return [] }
+            return items
+        }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: Key.history) }
+    }
+
+    func addHistory(_ text: String) {
+        guard historyEnabled else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var items = history
+        items.insert(HistoryEntry(text: trimmed, date: Date()), at: 0)
+        if items.count > 100 { items = Array(items.prefix(100)) }
+        history = items
+    }
+
+    func clearHistory() { defaults.removeObject(forKey: Key.history) }
 
     // Keychain accounts.
     enum KeyAccount {
@@ -137,6 +237,20 @@ final class SettingsStore {
             return v.isEmpty ? "openai/gpt-4o-mini-transcribe" : v
         }
         set { defaults.set(newValue, forKey: Key.openRouterSTTModel) }
+    }
+
+    /// Short, friendly name of the active cleanup model — shown in the HUD
+    /// ("Cleaning up · gpt-4o-mini"). Strips any "vendor/" prefix.
+    var cleanupModelDisplay: String {
+        let raw: String
+        switch llmChoice {
+        case .openAI:    raw = "gpt-4o-mini"
+        case .openRouter: raw = openRouterModel
+        case .groq:      raw = "llama-3.3-70b"
+        case .anthropic: raw = "claude-haiku-4.5"
+        case .ollama:    raw = "llama3.1:8b"
+        }
+        return raw.split(separator: "/").last.map(String.init) ?? raw
     }
 
     var dictationHotkey: HotkeyTrigger {
@@ -200,12 +314,16 @@ final class SettingsStore {
         }
     }
 
-    /// The cleanup-prompt instruction for the active mode (Power Mode override wins).
+    /// The cleanup-prompt instruction for the active mode (Power Mode override wins),
+    /// plus any cleanup-toggle overrides.
     var resolvedStyleInstruction: String {
         let id = overrideModeID ?? selectedModeID
-        if let style = WritingStyle(rawValue: id) { return style.instruction }
-        if let mode = customModes.first(where: { $0.id == id }) { return mode.instruction }
-        return WritingStyle.casual.instruction
+        let base: String
+        if let style = WritingStyle(rawValue: id) { base = style.instruction }
+        else if let mode = customModes.first(where: { $0.id == id }) { base = mode.instruction }
+        else { base = WritingStyle.casual.instruction }
+        let cleanup = cleanupInstruction
+        return cleanup.isEmpty ? base : "\(base) \(cleanup)"
     }
 
     // MARK: - Power Mode
@@ -346,30 +464,31 @@ final class SettingsStore {
     }
 
     /// Build the configured LLM provider, or throw if its key is missing.
-    func makeLLMProvider() throws -> LLMProvider {
+    /// `screenContext` (active-window content) is injected into the system prompt.
+    func makeLLMProvider(screenContext: String = "") throws -> LLMProvider {
         let instruction = resolvedStyleInstruction
         switch llmChoice {
         case .openAI:
             let key = apiKey(for: KeyAccount.openAI)
             guard !key.isEmpty else { throw FlowError.missingAPIKey(provider: "OpenAI") }
-            return OpenAILLMProvider(config: .openAILLM(apiKey: key), styleInstruction: instruction)
+            return OpenAILLMProvider(config: .openAILLM(apiKey: key), styleInstruction: instruction, screenContext: screenContext)
         case .openRouter:
             let key = apiKey(for: KeyAccount.openRouter)
             guard !key.isEmpty else { throw FlowError.missingAPIKey(provider: "OpenRouter") }
-            return OpenAILLMProvider(config: .openRouterLLM(apiKey: key, model: openRouterModel), styleInstruction: instruction)
+            return OpenAILLMProvider(config: .openRouterLLM(apiKey: key, model: openRouterModel), styleInstruction: instruction, screenContext: screenContext)
         case .groq:
             let key = apiKey(for: KeyAccount.groq)
             guard !key.isEmpty else { throw FlowError.missingAPIKey(provider: "Groq") }
             return OpenAILLMProvider(config: .init(
                 apiKey: key,
                 baseURL: URL(string: "https://api.groq.com/openai/v1")!,
-                model: "llama-3.3-70b-versatile"), styleInstruction: instruction)
+                model: "llama-3.3-70b-versatile"), styleInstruction: instruction, screenContext: screenContext)
         case .anthropic:
             let key = apiKey(for: KeyAccount.anthropic)
             guard !key.isEmpty else { throw FlowError.missingAPIKey(provider: "Anthropic") }
-            return AnthropicLLMProvider(apiKey: key, styleInstruction: instruction)
+            return AnthropicLLMProvider(apiKey: key, styleInstruction: instruction, screenContext: screenContext)
         case .ollama:
-            return OpenAILLMProvider(config: .ollama(model: "llama3.1:8b"), styleInstruction: instruction)
+            return OpenAILLMProvider(config: .ollama(model: "llama3.1:8b"), styleInstruction: instruction, screenContext: screenContext)
         }
     }
 }

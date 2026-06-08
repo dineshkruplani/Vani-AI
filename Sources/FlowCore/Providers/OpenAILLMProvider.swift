@@ -5,25 +5,31 @@ import Foundation
 public struct OpenAILLMProvider: LLMProvider {
     private let config: OpenAICompatibleConfig
     private let styleInstruction: String
+    private let screenContext: String
     private let transport: HTTPTransport
 
     public init(config: OpenAICompatibleConfig,
                 styleInstruction: String = "",
+                screenContext: String = "",
                 transport: HTTPTransport = URLSession.shared) {
         self.config = config
         self.styleInstruction = styleInstruction
+        self.screenContext = screenContext
         self.transport = transport
     }
+
+    private var contextBlock: String { FlowPrompt.screenContextBlock(screenContext) }
 
     public func cleanup(_ rawTranscript: String) async throws -> String {
         let trimmed = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        return try await chat(system: FlowPrompt.cleanupSystem(instruction: styleInstruction), user: trimmed)
+        return try await chat(system: FlowPrompt.cleanupSystem(instruction: styleInstruction) + contextBlock,
+                              user: FlowPrompt.cleanupUser(trimmed))
     }
 
     public func rewrite(instruction: String, selection: String) async throws -> String {
         let user = FlowPrompt.commandUser(instruction: instruction, selection: selection)
-        return try await chat(system: FlowPrompt.systemCommand, user: user)
+        return try await chat(system: FlowPrompt.systemCommand + contextBlock, user: user)
     }
 
     public func process(transcript: String, selection: String) async throws -> String {
@@ -31,9 +37,10 @@ public struct OpenAILLMProvider: LLMProvider {
         guard !t.isEmpty else { return "" }
         let sel = selection.trimmingCharacters(in: .whitespacesAndNewlines)
         if sel.isEmpty {
-            return try await chat(system: FlowPrompt.cleanupSystem(instruction: styleInstruction), user: t)
+            return try await chat(system: FlowPrompt.cleanupSystem(instruction: styleInstruction) + contextBlock,
+                                  user: FlowPrompt.cleanupUser(t))
         }
-        return try await chat(system: FlowPrompt.unifiedSystem(instruction: styleInstruction),
+        return try await chat(system: FlowPrompt.unifiedSystem(instruction: styleInstruction) + contextBlock,
                               user: FlowPrompt.unifiedUser(transcript: t, selection: sel))
     }
 

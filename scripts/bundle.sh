@@ -13,8 +13,18 @@ BIN="${ROOT}/.build/${CONFIG}/Vani"
 
 echo "Assembling ${APP} ..."
 rm -rf "${APP}"
-mkdir -p "${APP}/Contents/MacOS"
+mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources"
 cp "${BIN}" "${APP}/Contents/MacOS/Vani"
+
+# Bundle brand fonts (registered at launch by Fonts.registerBundled()).
+if [ -d "${ROOT}/Fonts" ]; then
+    cp "${ROOT}/Fonts/"*.ttf "${APP}/Contents/Resources/" 2>/dev/null || true
+fi
+
+# App icon.
+if [ -f "${ROOT}/Branding/Vani.icns" ]; then
+    cp "${ROOT}/Branding/Vani.icns" "${APP}/Contents/Resources/Vani.icns"
+fi
 
 cat > "${APP}/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -25,6 +35,7 @@ cat > "${APP}/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key>     <string>Vani</string>
     <key>CFBundleIdentifier</key>      <string>network.playai.vani</string>
     <key>CFBundleExecutable</key>      <string>Vani</string>
+    <key>CFBundleIconFile</key>        <string>Vani</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>0.1.0</string>
     <key>CFBundleVersion</key>         <string>1</string>
