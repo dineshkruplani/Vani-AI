@@ -34,7 +34,10 @@ final class AppState: ObservableObject {
 
     private var capturedSelection: String = ""
     private var capturedContext: String = ""
-    private var screenContextTask: Task<ScreenContextService.Capture, Never>?
+    // Screen context captured at press, in parallel with speech. `token` guards against
+    // a late result from a previous capture landing on the current one.
+    private var screenCaptureToken = 0
+    private var screenCaptureResult: ScreenContextService.Capture?
     private var currentMode: Mode = .dictation
 
     private var gestureDictation: GestureController!
@@ -129,14 +132,23 @@ final class AppState: ObservableObject {
         capturedSelection = (mode == .command) ? SelectionAccess.readForRouting() : ""
         capturedContext = SelectionAccess.contextBeforeCursor()
 
-        // Capture the active-window context now so it overlaps with speaking + STT and
-        // is ready by the time the cleanup LLM runs. Skipped if disabled.
+        // Capture the active-window context now so the (possibly vision) work overlaps
+        // with speaking + STT and is ready by the time the cleanup LLM runs.
         let store = SettingsStore.shared
+        screenCaptureToken &+= 1
+        let token = screenCaptureToken
+        screenCaptureResult = nil
         if store.screenContextEnabled {
-            let useOCR = store.screenOCREnabled
-            screenContextTask = Task.detached { await ScreenContextService.capture(useOCR: useOCR) }
-        } else {
-            screenContextTask = nil
+            let vision = store.visionContextEnabled
+            let orKey = store.apiKey(for: SettingsStore.KeyAccount.openRouter)
+            let vmodel = store.visionModel
+            Task.detached {
+                let cap = await ScreenContextService.capture(visionEnabled: vision, openRouterKey: orKey, visionModel: vmodel)
+                await MainActor.run {
+                    guard AppState.shared.screenCaptureToken == token else { return }
+                    AppState.shared.screenCaptureResult = cap
+                }
+            }
         }
 
         guard recorder.start() else { fail("Couldn't start the microphone"); return false }
@@ -212,11 +224,16 @@ final class AppState: ObservableObject {
             diagTranscript = transcript
 
             status = .thinking
-            // Active-window context captured at recording start (ready by now).
-            let capture = await screenContextTask?.value
+            // Context capture started at press and overlapped speech + STT. It's almost
+            // always ready by now; for very short utterances wait at most 200ms more.
+            let ctxDeadline = Date().addingTimeInterval(0.2)
+            while screenCaptureResult == nil && Date() < ctxDeadline {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            let capture = screenCaptureResult
             let screenContext = capture?.text ?? ""
             diagContext = screenContext
-            diagSource = capture?.source ?? (SettingsStore.shared.screenContextEnabled ? "—" : "disabled")
+            diagSource = capture?.source ?? (SettingsStore.shared.screenContextEnabled ? "not ready (>200ms)" : "disabled")
 
             switch mode {
             case .dictation:
@@ -296,7 +313,6 @@ final class AppState: ObservableObject {
         guard status != .idle else { return }
         processingTask?.cancel()
         processingTask = nil
-        screenContextTask?.cancel()
         if status == .recording { _ = recorder.stop() }
         status = .idle
         HUDController.shared.hide()

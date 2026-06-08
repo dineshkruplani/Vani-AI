@@ -53,8 +53,12 @@ Implementing the Vani visual handoff in SwiftUI, phased.
 - [x] **Context awareness (screen content)** — `ScreenContextService` reads the active window (app name +
       title + visible text via the AX tree) at recording start and injects it into the cleanup/command LLM
       system prompt (`<SCREEN_CONTEXT>` block) so it spells on-screen names right and matches context.
-      Opt-in **Screen-OCR fallback** (ScreenCaptureKit + Vision) for apps AX can't read (needs Screen
-      Recording). Toggles in Voice → Context awareness; default on (AX), OCR off. (VoiceInk parity.)
+- [x] **AI Vision context (two-stage)** — opt-in tier that replaces local OCR: at press, screenshots the
+      active window (cropped, downscaled, JPEG) and sends it to a vision model (`gpt-4o-mini` via OpenRouter,
+      `VisionContextProvider`) **while the user dictates**; the model returns distilled JSON
+      (summary/replyingTo/focusedField/names/tone) which is injected into the final text call. 60s per-window
+      cache, 200ms max extra wait on short utterances, AX fallback on failure. Needs Screen Recording +
+      OpenRouter key. Diagnostics shows the live source (vision / vision cached / failed reason).
 - [ ] **In-app local-model manager** — download/select whisper.cpp models from within the app (today the
       user curls a model + pastes a path). VoiceInk-style.
 - [ ] **Deeper "Correct Last" learning** — diff old→corrected to auto-build wrong→right replacements,

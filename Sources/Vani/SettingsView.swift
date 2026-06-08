@@ -47,7 +47,8 @@ struct SettingsView: View {
     @State private var autoPunct = SettingsStore.shared.autoPunctuation
     @State private var smartCaps = SettingsStore.shared.smartCaps
     @State private var screenContext = SettingsStore.shared.screenContextEnabled
-    @State private var screenOCR = SettingsStore.shared.screenOCREnabled
+    @State private var visionContext = SettingsStore.shared.visionContextEnabled
+    @State private var visionModel = SettingsStore.shared.visionModel
     @State private var playSound = SettingsStore.shared.playSound
     @State private var floatingIndicator = SettingsStore.shared.showFloatingIndicator
     @State private var holdPrompt = SettingsStore.shared.showHoldPrompt
@@ -174,12 +175,18 @@ struct SettingsView: View {
                            subtitle: "Reads the active window (app, title, visible text) so the AI spells names right and matches context.",
                            showDivider: screenContext) { sw($screenContext) }
                 if screenContext {
-                    SettingRow(title: "Use screen OCR for unreadable apps",
-                               subtitle: "Screenshots + reads the window when Accessibility can\u{2019}t. Needs Screen Recording permission.",
-                               showDivider: false) { sw($screenOCR) }
+                    SettingRow(title: "Use AI vision for richer context",
+                               subtitle: "Sends a screenshot of the active window to \(visionModel) (via OpenRouter) while you talk; it distills what\u{2019}s on screen. Needs Screen Recording + an OpenRouter key.",
+                               showDivider: visionContext) { sw($visionContext) }
+                    if visionContext {
+                        SettingRow(title: "Vision model", showDivider: false) {
+                            TextField("openai/gpt-4o-mini", text: $visionModel)
+                                .textFieldStyle(.plain).frame(width: 200).multilineTextAlignment(.trailing)
+                        }
+                    }
                 }
             }
-            caption("Context is read on-device and sent only to your chosen provider with your dictation — never to us.")
+            caption("Context is captured on your Mac and sent only to your chosen provider with your dictation — never to us. Vision sends an image of the active window; cached 60s per window.")
 
             GroupLabel("Custom vocabulary")
             GlassCard {
@@ -416,7 +423,8 @@ struct SettingsView: View {
         store.autoPunctuation = autoPunct
         store.smartCaps = smartCaps
         store.screenContextEnabled = screenContext
-        store.screenOCREnabled = screenOCR
+        store.visionContextEnabled = visionContext
+        store.visionModel = visionModel.trimmingCharacters(in: .whitespaces).isEmpty ? "openai/gpt-4o-mini" : visionModel
         store.playSound = playSound
         store.showFloatingIndicator = floatingIndicator
         store.showHoldPrompt = holdPrompt

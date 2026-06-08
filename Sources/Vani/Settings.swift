@@ -120,7 +120,8 @@ final class SettingsStore {
         static let holdPrompt = "showHoldPrompt"
         static let diagnostics = "anonymousDiagnostics"
         static let screenContext = "screenContextEnabled"
-        static let screenOCR = "screenOCREnabled"
+        static let visionContext = "visionContextEnabled"
+        static let visionModel = "visionModel"
     }
 
     // Transient per-dictation overrides (set by Power Mode at capture time; not persisted).
@@ -157,8 +158,13 @@ final class SettingsStore {
     var showHoldPrompt: Bool { get { boolDefaultTrue(Key.holdPrompt) } set { defaults.set(newValue, forKey: Key.holdPrompt) } }
     /// Read the active window (app, title, visible text) and give it to the AI as context.
     var screenContextEnabled: Bool { get { boolDefaultTrue(Key.screenContext) } set { defaults.set(newValue, forKey: Key.screenContext) } }
-    /// Opt-in: screenshot + OCR the active window for apps Accessibility can't read (needs Screen Recording).
-    var screenOCREnabled: Bool { get { defaults.bool(forKey: Key.screenOCR) } set { defaults.set(newValue, forKey: Key.screenOCR) } }
+    /// Opt-in: screenshot the active window and have a vision model distill context
+    /// (needs Screen Recording + an OpenRouter key). Replaces the old local-OCR tier.
+    var visionContextEnabled: Bool { get { defaults.bool(forKey: Key.visionContext) } set { defaults.set(newValue, forKey: Key.visionContext) } }
+    var visionModel: String {
+        get { let v = defaults.string(forKey: Key.visionModel) ?? ""; return v.isEmpty ? "openai/gpt-4o-mini" : v }
+        set { defaults.set(newValue, forKey: Key.visionModel) }
+    }
     var diagnostics: Bool { get { defaults.bool(forKey: Key.diagnostics) } set { defaults.set(newValue, forKey: Key.diagnostics) } }
 
     var accentHex: UInt32 {

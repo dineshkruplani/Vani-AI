@@ -146,6 +146,30 @@ private let dummyAudio = URL(fileURLWithPath: #filePath)
     #expect((messages.first?["content"] ?? "").contains("SCREEN_CONTEXT") == false)
 }
 
+@Test func visionProviderSendsImageAndParsesInsight() async throws {
+    let content = #"{\"summary\":\"WhatsApp chat with Sujai about pricing\",\"replyingTo\":\"can we get cloud pro\",\"focusedField\":\"WhatsApp reply box\",\"names\":[\"Sujai\",\"Cloud Pro\"],\"tone\":\"casual\"}"#
+    let body = "{\"choices\":[{\"message\":{\"content\":\"\(content)\"}}]}"
+    let transport = MockTransport([.init(status: 200, body: json(body))])
+    let provider = VisionContextProvider(apiKey: "sk-or-test", transport: transport)
+
+    let insight = try await provider.extract(imageJPEG: Data([0xFF, 0xD8, 0xFF]), appName: "Brave Browser", fieldHint: "WhatsApp")
+    #expect(insight.summary?.contains("Sujai") == true)
+    #expect(insight.focusedField == "WhatsApp reply box")
+    #expect(insight.names?.contains("Cloud Pro") == true)
+
+    let sent = String(decoding: transport.requests.first!.httpBody!, as: UTF8.self)
+    #expect(sent.contains("image_url"))
+    #expect(sent.contains("base64,"))          // note: JSON escapes "/" so match the tail
+    #expect(sent.contains("response_format"))
+}
+
+@Test func visionProviderMissingKeyThrows() async {
+    let provider = VisionContextProvider(apiKey: "", transport: MockTransport([]))
+    await #expect(throws: FlowError.self) {
+        _ = try await provider.extract(imageJPEG: Data([0xFF]), appName: "X")
+    }
+}
+
 @Test func textReplacementsAreCaseInsensitiveAndOrdered() {
     let out = TextTransforms.applyReplacements(
         "email me at my email and visit my site",
