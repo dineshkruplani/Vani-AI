@@ -27,6 +27,7 @@ public struct OpenAISTTProvider: STTProvider {
         let boundary = "Vani-\(UUID().uuidString)"
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 45   // audio upload may be larger; still bounded
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 

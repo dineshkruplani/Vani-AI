@@ -46,6 +46,7 @@ public struct OpenRouterSTTProvider: STTProvider {
         let url = baseURL.appendingPathComponent("audio/transcriptions")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 45   // audio upload may be larger; still bounded
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 

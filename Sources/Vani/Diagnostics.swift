@@ -14,6 +14,7 @@ final class Diagnostics: ObservableObject {
         let mode: String
         let transcript: String
         let contextChars: Int
+        let contextSource: String
         let contextPreview: String
         let output: String
         let leakStripped: Bool
@@ -25,7 +26,7 @@ final class Diagnostics: ObservableObject {
             return """
             [\(f.string(from: when))]  \(mode.uppercased())  app=\(app)  \(ms)ms\(leakStripped ? "  ⚠️ context-leak stripped" : "")
             transcript: \(transcript)
-            screen-context: \(contextChars) chars\(contextChars == 0 ? " (none — capture empty/disabled)" : "")
+            screen-context: \(contextChars) chars · source: \(contextSource)
             context-preview: \(contextPreview)
             output: \(output)
             """
@@ -35,10 +36,10 @@ final class Diagnostics: ObservableObject {
     @Published private(set) var entries: [Entry] = []
 
     func record(app: String, mode: String, transcript: String, context: String,
-                output: String, leakStripped: Bool, ms: Int) {
+                contextSource: String, output: String, leakStripped: Bool, ms: Int) {
         let preview = String(context.replacingOccurrences(of: "\n", with: " ").prefix(220))
         let entry = Entry(when: Date(), app: app, mode: mode, transcript: transcript,
-                          contextChars: context.count, contextPreview: preview,
+                          contextChars: context.count, contextSource: contextSource, contextPreview: preview,
                           output: output, leakStripped: leakStripped, ms: ms)
         entries.insert(entry, at: 0)
         if entries.count > 25 { entries.removeLast(entries.count - 25) }

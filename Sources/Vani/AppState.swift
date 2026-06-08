@@ -34,7 +34,7 @@ final class AppState: ObservableObject {
 
     private var capturedSelection: String = ""
     private var capturedContext: String = ""
-    private var screenContextTask: Task<String, Never>?
+    private var screenContextTask: Task<ScreenContextService.Capture, Never>?
     private var currentMode: Mode = .dictation
 
     private var gestureDictation: GestureController!
@@ -61,6 +61,18 @@ final class AppState: ObservableObject {
         }
         reloadHotkeys()
         FocusWatcher.shared.start()
+        installEscapeToCancel()
+    }
+
+    /// Esc cancels an in-flight recording/processing, from any app (passive monitor —
+    /// it never swallows the key, so Esc still works normally everywhere).
+    private func installEscapeToCancel() {
+        let handle: (NSEvent) -> Void = { [weak self] event in
+            guard event.keyCode == 53 else { return }   // 53 = Escape
+            Task { @MainActor in self?.cancelProcessing() }
+        }
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { handle($0) }
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { handle($0); return $0 }
     }
 
     /// (Re)bind the configured hotkeys and ensure the tap is running.
@@ -111,9 +123,10 @@ final class AppState: ObservableObject {
 
         currentMode = mode
         applyPowerMode()
-        // Snapshot selection (command edits it / answer ignores it) and the text
-        // before the caret (to prime transcription and to give answers context).
-        capturedSelection = SelectionAccess.readForRouting()
+        // Snapshot the selection ONLY for Command Mode (it's what the command edits).
+        // Dictation never uses the selection, so we skip it there — that avoids the ⌘C
+        // clipboard fallback firing (and clobbering the clipboard) on every dictation.
+        capturedSelection = (mode == .command) ? SelectionAccess.readForRouting() : ""
         capturedContext = SelectionAccess.contextBeforeCursor()
 
         // Capture the active-window context now so it overlaps with speaking + STT and
@@ -182,12 +195,12 @@ final class AppState: ObservableObject {
         // Local diagnostics (see menu → Diagnostics). Filled in as we go; recorded on exit.
         let started = Date()
         let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
-        var diagTranscript = "", diagContext = "", diagOutput = ""
+        var diagTranscript = "", diagContext = "", diagOutput = "", diagSource = "—"
         var diagLeak = false
         defer {
             Diagnostics.shared.record(app: frontApp, mode: "\(mode)", transcript: diagTranscript,
-                                      context: diagContext, output: diagOutput, leakStripped: diagLeak,
-                                      ms: Int(Date().timeIntervalSince(started) * 1000))
+                                      context: diagContext, contextSource: diagSource, output: diagOutput,
+                                      leakStripped: diagLeak, ms: Int(Date().timeIntervalSince(started) * 1000))
         }
 
         do {
@@ -200,8 +213,10 @@ final class AppState: ObservableObject {
 
             status = .thinking
             // Active-window context captured at recording start (ready by now).
-            let screenContext = await screenContextTask?.value ?? ""
+            let capture = await screenContextTask?.value
+            let screenContext = capture?.text ?? ""
             diagContext = screenContext
+            diagSource = capture?.source ?? (SettingsStore.shared.screenContextEnabled ? "—" : "disabled")
 
             switch mode {
             case .dictation:
@@ -247,13 +262,10 @@ final class AppState: ObservableObject {
                 let llm = try SettingsStore.shared.makeLLMProvider(screenContext: screenContext)
                 HUDController.shared.show(phase: .cleaning, title: "Editing selection",
                                           detail: SettingsStore.shared.cleanupModelDisplay)
-                var text = try await llm.rewrite(instruction: transcript, selection: selection)
-                if !screenContext.isEmpty {
-                    // Keep lines that came from the selection; only strip screen-context echoes.
-                    let safe = stripContextLeak(text, transcript: transcript + "\n" + selection, context: screenContext)
-                    if safe != text { diagLeak = true }
-                    if !safe.isEmpty { text = safe }
-                }
+                // No leak-stripping here: a command rewrite legitimately reuses the
+                // selection (which is on screen), so stripping screen-matching lines
+                // would corrupt the result. Leak-stripping stays a dictation-only guard.
+                let text = try await llm.rewrite(instruction: transcript, selection: selection)
                 let final = applySnippets(text.isEmpty ? selection : text)
                 diagOutput = final
                 TextInserter.insert(final)
@@ -274,8 +286,20 @@ final class AppState: ObservableObject {
                 AnswerHUDController.shared.show(reply.isEmpty ? "(no answer)" : reply)
             }
         } catch {
+            if Task.isCancelled { return }   // user pressed Esc — cancelProcessing cleaned up
             fail((error as? FlowError)?.errorDescription ?? error.localizedDescription)
         }
+    }
+
+    /// Abort an in-flight recording/processing (Esc). Cancels the network call and resets.
+    func cancelProcessing() {
+        guard status != .idle else { return }
+        processingTask?.cancel()
+        processingTask = nil
+        screenContextTask?.cancel()
+        if status == .recording { _ = recorder.stop() }
+        status = .idle
+        HUDController.shared.hide()
     }
 
     // MARK: - Onboarding test (no paste; result shown in the wizard)

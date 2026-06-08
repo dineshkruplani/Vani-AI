@@ -57,6 +57,7 @@ public struct OpenAILLMProvider: LLMProvider {
         let url = config.baseURL.appendingPathComponent("chat/completions")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 30   // don't hang the HUD on a stalled connection
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 

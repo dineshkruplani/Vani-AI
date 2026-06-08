@@ -56,7 +56,7 @@ struct MenuContent: View {
                 .disabled(diag.entries.isEmpty)
             if let last = diag.entries.first {
                 Divider()
-                Text("Last: \(last.contextChars) ctx chars\(last.leakStripped ? " · leak stripped" : "")")
+                Text("Last: \(last.contextChars) ctx · \(last.contextSource)\(last.leakStripped ? " · leak stripped" : "")")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
