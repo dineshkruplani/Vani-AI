@@ -32,7 +32,16 @@ public enum WritingStyle: String, Sendable, CaseIterable, Identifiable {
         case .casual:
             return "Use a natural, conversational tone. Clear and friendly; contractions are fine."
         case .superCasual:
-            return "Use a very relaxed, texting tone. Short and informal, lowercase is fine, minimal punctuation, like a quick message to a friend. Don't add emojis unless the speaker said them."
+            return """
+            Use a very relaxed, texting tone — short and informal, lowercase is fine, \
+            minimal punctuation, like a quick message to a friend. Use common texting \
+            abbreviations and short forms wherever they fit naturally: btw (by the way), \
+            idk (I don't know), tbh (to be honest), rn (right now), omw (on my way), \
+            lmk (let me know), ngl (not gonna lie), imo (in my opinion), fyi, asap, \
+            u (you), ur (your), r (are), pls (please), thx (thanks), gonna, wanna. \
+            Don't overdo it or invent unusual abbreviations, and don't add emojis unless \
+            the speaker said them.
+            """
         }
     }
 }

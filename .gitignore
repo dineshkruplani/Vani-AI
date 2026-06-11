@@ -3,3 +3,5 @@ Vani.app/
 *.xcodeproj
 .DS_Store
 .swiftpm/
+dist/
+*.dmg

@@ -46,6 +46,11 @@ final class HUDController {
         panel?.orderOut(nil)
     }
 
+    /// Feed the live mic level (0…1) so the waveform reacts to the voice.
+    func setLevel(_ level: CGFloat) {
+        model.level = max(0, min(1, level))
+    }
+
     /// Show/hide the idle "Hold … to talk" prompt (driven by FocusWatcher). Never
     /// clobbers an active (non-idle) HUD that's currently on screen.
     func setIdlePrompt(_ shouldShow: Bool) {
@@ -133,6 +138,7 @@ final class HUDModel: ObservableObject {
     @Published var phase: HUDPhase = .transcribing
     @Published var title: String = ""
     @Published var detail: String = ""
+    @Published var level: CGFloat = 0   // live mic level 0…1 (drives the waveform)
     var startedAt = Date()
 }
 
@@ -189,7 +195,7 @@ private struct IslandView: View {
     private var standardContent: some View {
         HStack(spacing: 11) {
             leading
-            if isListening { Waveform() }
+            if isListening { Waveform(level: model.level) }
             // Title + inline muted detail, e.g. "Cleaning up · gpt-4o-mini".
             HStack(spacing: 6) {
                 Text(model.title)
@@ -266,20 +272,26 @@ private struct VoiceDot: View {
 }
 
 private struct Waveform: View {
-    @State private var animate = false
-    // Fixed "recorded waveform" silhouette like the board — many thin bars, varied heights.
-    private let heights: [CGFloat] = [6, 14, 9, 18, 7, 16, 4, 20, 8, 15, 6, 17, 11, 19, 5, 13, 9, 16, 7, 12]
+    var level: CGFloat                    // live mic level 0…1
+    // Per-bar weights give the silhouette shape; the live level scales the whole thing.
+    private let weights: [CGFloat] = [0.35, 0.7, 0.5, 0.95, 0.45, 0.8, 0.3, 1.0, 0.5, 0.75,
+                                      0.35, 0.85, 0.6, 0.95, 0.4, 0.7, 0.5, 0.8, 0.45, 0.65]
     var body: some View {
-        HStack(spacing: 2.5) {
-            ForEach(heights.indices, id: \.self) { i in
-                Capsule().fill(.white.opacity(0.9))
-                    .frame(width: 2.5, height: animate ? heights[i] : 4)
-                    .animation(.easeInOut(duration: 0.5 + Double(i % 5) * 0.1)
-                        .repeatForever(autoreverses: true).delay(Double(i) * 0.03), value: animate)
+        // A gentle idle shimmer so it's alive even in silence, plus the real level on top.
+        TimelineView(.animation) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 2.5) {
+                ForEach(weights.indices, id: \.self) { i in
+                    let shimmer = 0.5 + 0.5 * sin(t * 6 + Double(i) * 0.7)   // 0…1
+                    let idle: CGFloat = 4 + 2 * CGFloat(shimmer)
+                    let active = idle + level * weights[i] * 18
+                    Capsule().fill(.white.opacity(0.9))
+                        .frame(width: 2.5, height: min(22, active))
+                }
             }
+            .frame(height: 22)
+            .animation(.easeOut(duration: 0.08), value: level)
         }
-        .frame(height: 22)
-        .onAppear { animate = true }
     }
 }
 

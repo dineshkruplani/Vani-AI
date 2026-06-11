@@ -31,6 +31,8 @@ final class AppState: ObservableObject {
     private let recorder = AudioRecorder()
     private let hotkey = HotkeyManager()
     private var processingTask: Task<Void, Never>?
+    private var meterTimer: Timer?
+    private var peakLevel: Float = 0   // loudest mic level seen this recording (silence guard)
 
     private var capturedSelection: String = ""
     private var capturedContext: String = ""
@@ -156,9 +158,31 @@ final class AppState: ObservableObject {
         return true
     }
 
+    /// Poll the mic level ~20×/s: feed the HUD waveform and track the peak for silence detection.
+    private func startMetering() {
+        peakLevel = 0
+        meterTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.05, repeats: true) { _ in
+            Task { @MainActor in
+                let l = AppState.shared.recorder.level()
+                AppState.shared.peakLevel = max(AppState.shared.peakLevel, l)
+                HUDController.shared.setLevel(CGFloat(l))
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        meterTimer = timer
+    }
+
+    private func stopMetering() {
+        meterTimer?.invalidate()
+        meterTimer = nil
+        HUDController.shared.setLevel(0)
+    }
+
     /// Reveal the recording HUD + play the start cue (once a gesture is confirmed).
     private func confirmRecordingHUD() {
         SoundCue.start()
+        startMetering()
         switch currentMode {
         case .dictation:
             HUDController.shared.show(phase: .listening(command: false), title: "Listening")
@@ -170,6 +194,7 @@ final class AppState: ObservableObject {
 
     /// Drop an in-progress capture without processing (a quick tap).
     private func discardCapture() {
+        stopMetering()
         if let url = recorder.stop() { try? FileManager.default.removeItem(at: url) }
         status = .idle
         HUDController.shared.hide()
@@ -190,6 +215,15 @@ final class AppState: ObservableObject {
 
     func endRecordingAndProcess() {
         guard status == .recording, let url = recorder.stop() else { return }
+        stopMetering()
+        // If the user never actually spoke, skip the whole pipeline — this is what stops
+        // Whisper hallucinating a stray word (e.g. "you") on silence.
+        if peakLevel < 0.08 {
+            try? FileManager.default.removeItem(at: url)
+            status = .idle
+            HUDController.shared.hide()
+            return
+        }
         status = .transcribing
         let mode = currentMode
         processingTask = Task { [weak self] in

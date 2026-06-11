@@ -53,4 +53,13 @@ final class AudioRecorder: NSObject {
     }
 
     var isRecording: Bool { recorder?.isRecording ?? false }
+
+    /// Current mic input level, normalized 0…1 (drives the HUD waveform + silence
+    /// detection). Returns 0 when not recording.
+    func level() -> Float {
+        guard let recorder, recorder.isRecording else { return 0 }
+        recorder.updateMeters()
+        let db = recorder.averagePower(forChannel: 0)   // ~ -160 (silence) … 0 (loud)
+        return max(0, min(1, (db + 50) / 50))           // -50 dB → 0, 0 dB → 1
+    }
 }
